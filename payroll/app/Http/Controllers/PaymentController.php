@@ -4,121 +4,156 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+//use Illuminate\Support\Facades\Log;
+use App\Rules\ValidName;
+use App\Rules\ValidYear;
 
 class PaymentController extends Controller
 {
-	/*
-	* Return the payment dates list
-	**/
+   
+    /**
+    *  Payment dates list
+    *
+    *  @return CVS file
+    *
+    **/
     public function index($language,$name,$year)
     {
-        return this::show($language,$name,$year);
+        return $this::show($language,$name,$year);
     }
 
+    /**
+    *  Show Payment dates list
+    *
+    *  @return CVS file
+    *
+    **/
     public function show($language,$name,$year)
     {
-    	return $this::paymentDays($year);
-        //return $this::renderCVS($language,$name,$year);
+        
+        if ($this::validateLanguage($language))
+        {
+            \App::setLocale($language);
+        }
+        if ($this::validateName($name))
+        {
+            if ($this::validateYear($year))
+               return $this::renderCSV($name,$year);
+            else 
+                return 'year error';
+        } 
+        else        
+            return 'name error';
+
     }
 
-	/*
-	* Render CSV file --- Error in Response (not enough time to find the issue)
-	**/
-    private function renderCVS($language,$name,$year){
-	    $headers = [
-	            'Cache-Control'       => 'must-revalidate, post-check=0, pre-check=0'
-	        ,   'Content-type'        => 'text/csv'
-	        ,   'Content-Disposition' => 'attachment; filename='.$name.'.csv'
-	        ,   'Expires'             => '0'
-	        ,   'Pragma'              => 'public'
-	    ];    	
+    /**
+    * Render CSV file
+    *
+    *  @return CSV file
+    *
+    **/
+    private function renderCSV($name,$year)
+    {
+        $headers = [
+                'Cache-Control'       => 'must-revalidate, post-check=0, pre-check=0',   
+                'Content-type'        => 'text/csv',
+                'Content-Disposition' => 'attachment; filename='.$name.'.csv',
+                'Expires'             => '0',
+                'Pragma'              => 'public'
+        ];        
 
-    	$columns = array('Month Name', '1st expenses day', '2nd expenses day', 'Salary day');
-    	$payments = $this::paymentDays($year);
+        $columns = array(trans('payments.paymentsheaders.column1'), 
+                         trans('payments.paymentsheaders.column2'), 
+                         trans('payments.paymentsheaders.column3'), 
+                         trans('payments.paymentsheaders.column4')
+                         );
 
-	    $callback = function() use ($payments, $columns)
-	    {
-	        $file = fopen('php://output', 'w');
-	        fputcsv($file, $columns);
+        $rows = $this::paymentDays($year);
 
-	        foreach($reviews as $review) {
-	            fputcsv($file, array($row['name'], $row['expenses'][1], $row['expenses'][2], $row['lastday']));
-	        }
-	        fclose($file);
-	    };
-	    return Response::stream($callback, 200, $headers);
+        $file = fopen('php://output', 'w');
+        fputcsv($file, $columns);
+        foreach($rows as $row) 
+        {
+            fputcsv($file, array($row['name'], $row['expenses'][1], $row['expenses'][2], $row['lastday']));
+        }
+        fclose($file);
+        return response()->download($name.'.csv', $name.'.csv', $headers); 
     }
   
- 	/*
-	* Return the array with the payments by month
-	**/ 
+    /**
+    * Payments by month
+    *
+    *  @return array
+    *
+    **/
     private function paymentDays($year)
     {
-    	$months = array();
-       	for ($i=1;$i<13;$i++){
-       		$month=$i < 10? '0'.$i:$i;
-       		$months[$i]['name'] = date("F", strtotime($year.'-'.$month.'-01'));
-    		$months[$i]['lastday'] = date('Y-m-d',$this::lastDayOfMonth($month,$year));
-    		$months[$i]['expenses'][1] = date('Y-m-d',$this::weekDaysValidation($year,$month,1,'expenses'));
-    		$months[$i]['expenses'][2] = date('Y-m-d',$this::weekDaysValidation($year,$month,15,'expenses'));
-    	}  	
-    	return $months;
+        $payments = array();
+        for ($i=1;$i<13;$i++)
+        {
+            $month=$i < 10? '0'.$i:$i;
+            $payments[$i]['name'] = date("F", strtotime($year.'-'.$month.'-01'));
+            $payments[$i]['lastday'] = date('Y-m-d',$this::lastDayOfMonth($month,$year));
+            $payments[$i]['expenses'][1] = date('Y-m-d',$this::weekDaysValidation($year,$month,1,'expenses'));
+            $payments[$i]['expenses'][2] = date('Y-m-d',$this::weekDaysValidation($year,$month,15,'expenses'));
+        }      
+        return $payments;
     } 
 
-	/*
-	* Return the last day of the month
-	**/
+    /*
+    * Last day of the month
+    *
+    *  @return array
+    *
+    **/
     private function lastDayOfMonth($month,$year)
     {
-    	$day = date('t',strtotime($year.'-'.$month.'-01'));
-    	$date = $this::weekDaysValidation($year,$month,$day,'normal');
+        $day = date('t',strtotime($year.'-'.$month.'-01'));
+        $date = $this::weekDaysValidation($year,$month,$day,'normal');
         return $date;
     }      
 
-	/*
-	* Return the weekdays validated by weekends
-	**/    
-	private function weekDaysValidation($year,$month,$day,$case)
-	{
-		$date = strtotime($year.'-'.$month.'-'.$day);
-    	$weekday = date('w',$date);
-    	//echo $weekday.'-'.date('Y m d',$date).'<br>';
-    	if($weekday == 0 && $case == 'normal') {
-    		$date = strtotime('-2 day',$date); 
-    	}
-    	if($weekday == 6 && $case == 'normal') {
-    		$date = strtotime('-1 day',$date); 
-    	}    	
-    	if($weekday == 0 && $case == 'expenses') {
-    		$date = strtotime('+1 day',$date); 
-    	}
-    	if($weekday == 6 && $case == 'expenses') {
-    		$date = strtotime('+2 day',$date); 
-    	} 
-
-    	return $date;	
-	}
-
-    /* Validate the empty values and messages by language - not enough time to finish it */
-    private function validateInput($input)
+    /**
+    * Return the weekdays validated by weekends
+    *
+    *  @return date
+    *
+    **/
+    private function weekDaysValidation($year,$month,$day,$case)
     {
+        $date = strtotime($year.'-'.$month.'-'.$day);
+        $weekday = date('w',$date);
+        if($weekday == 0 && $case == 'normal') {
+            $date = strtotime('-2 day',$date); 
+        }
+        if($weekday == 6 && $case == 'normal') {
+            $date = strtotime('-1 day',$date); 
+        }        
+        if($weekday == 0 && $case == 'expenses') {
+            $date = strtotime('+1 day',$date); 
+        }
+        if($weekday == 6 && $case == 'expenses') {
+            $date = strtotime('+2 day',$date); 
+        } 
 
-    }  
-    private function isEmpty($value)
-    {
-    	return (!empty($value));
+        return $date;    
     }
-    private function messages($type,$value)
-    {
-    	switch ($type) {
-    		case 'empty':
-    			$message = '';
-    			break;
-    		
-    		default:
-    			# code...
-    			break;
-    	}
-    	return $message;
-    } 
+
+    private function validateLanguage($value){
+        return strlen($value) == 2 && !$this::isEmpty($value);        
+    }
+
+    private function validateName($value){
+        return !$this::isEmpty($value);        
+    }
+
+    private function validateYear($value){
+        return strlen($value)==4 && !$this::isEmpty($value);        
+    }
+
+    private function isEmpty($value){
+        return empty($value);
+    }
+
 }
